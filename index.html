@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบเช็คอินฝึกงาน ปวส.2/1</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;600&display=swap');
+        body { font-family: 'Prompt', sans-serif; text-align: center; background-color: #f4f6f9; padding: 20px; color: #333; margin: 0; }
+        .container { max-width: 450px; background: white; margin: 30px auto; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { color: #007bff; font-weight: 600; margin-bottom: 5px; }
+        p { font-size: 13px; color: #666; margin-bottom: 20px; }
+        input { width: 90%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: center; font-family: 'Prompt', sans-serif; }
+        video { width: 100%; max-width: 350px; border-radius: 10px; margin: 15px 0; background: #222; transform: scaleX(-1); }
+        button { width: 95%; padding: 14px; font-size: 16px; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-family: 'Prompt', sans-serif; transition: 0.2s; }
+        button:hover { background: #218838; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 14px; font-weight: bold; line-height: 1.5; }
+        .loading { color: #ffc107; }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>📸 ระบบเช็คอินฝึกงานวิทยาลัย</h2>
+    <p>ถ่ายรูปและบันทึกพิกัดฝึกงานประจำวัน ห้อง ปวส.2/1</p>
+    
+    <input type="text" id="studentId" placeholder="กรอกรหัสนักศึกษา 10 หลัก" inputmode="numeric" required>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    
+    <button id="btnCheckIn">ถ่ายรูป & เช็คอินตอนนี้</button>
+    <div id="status">🎥 กำลังเชื่อมต่อเปิดใช้งานกล้องถ่ายรูป...</div>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const btnCheckIn = document.getElementById('btnCheckIn');
+    const status = document.getElementById('status');
+
+    // สั่งเปิดกล้องทันทีที่เปิดหน้าเว็บ (ใน FastAPI ป๊อปอัปจะเด้งถามสิทธิ์แน่นอน 100%)
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+        .then(stream => { 
+            video.srcObject = stream; 
+            status.innerHTML = "<span class='success'>📷 ระบบกล้องหน้าพร้อมใช้งาน</span>";
+        })
+        .catch(err => { 
+            status.innerHTML = "<span class='error'>❌ ไม่สามารถเปิดกล้องได้: กรุณาอนุญาตให้เว็บเข้าถึงกล้องถ่ายรูป</span>";
+            btnCheckIn.disabled = true;
+        });
+
+    btnCheckIn.addEventListener('click', () => {
+        const studentId = document.getElementById('studentId').value.trim();
+        if (!studentId) { alert("กรุณากรอกรหัสนักศึกษาของคุณด้วยครับ"); return; }
+
+        if (navigator.geolocation) {
+            btnCheckIn.disabled = true;
+            status.innerHTML = "<span class='loading'>📍 กำลังดึงค่า GPS ความแม่นยำสูง และส่งข้อมูลเช็คอิน...</span>";
+
+            navigator.geolocation.getCurrentPosition((position) => {
+                // จับภาพนิ่งจากกล้องวิดีโอ
+                const context = canvas.getContext('2d');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // บีบอัดรูปถ่ายเหลือ 70% ป้องกันเครือข่ายมือถือของเด็กส่งไม่ไหว
+                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+
+                // ส่งค่าขึ้น API หลังบ้าน FastAPI ของเรา
+                fetch('/api/checkin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        studentId: studentId,
+                        lat: position.coords.latitude,
+                        lon: position.coords.longitude,
+                        image: imageData
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === "SUCCESS") {
+                        status.innerHTML = "<span class='success'>✅ " + data.message + "</span>";
+                        document.getElementById('studentId').value = ""; // เคลียร์ฟอร์ม
+                    } else {
+                        status.innerHTML = "<span class='error'>❌ " + data.message + "</span>";
+                    }
+                    btnCheckIn.disabled = false;
+                })
+                .catch(err => {
+                    status.innerHTML = "<span class='error'>❌ ไม่สามารถเชื่อมต่อกับหน่วยประมวลผลหลักได้</span>";
+                    btnCheckIn.disabled = false;
+                });
+
+            }, (error) => {
+                status.innerHTML = "<span class='error'>❌ เช็คอินล้มเหลว: กรุณาเปิดระบบระบุตำแหน่งพิกัด (GPS) บนโทรศัพท์</span>";
+                btnCheckIn.disabled = false;
+            }, { enableHighAccuracy: true, timeout: 10000 });
+        } else {
+            alert("อุปกรณ์ของคุณไม่สนับสนุนระบบ GPS");
+        }
+    });
+</script>
+</body>
+</html>

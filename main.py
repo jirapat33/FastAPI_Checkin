@@ -1,0 +1,87 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+import gspread
+import requests
+import datetime
+import os
+
+app = FastAPI()
+
+# ปลดล็อก CORS ป้องกันหน้าเว็บโดนบล็อกการส่งข้อมูล
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 🔥 ใส่ API Key ของ ImgBB ที่คุณสมัครได้ที่นี่
+IMGBB_API_KEY = "2d92667726a566be79eef1517643bc01"
+
+class CheckInSchema(BaseModel):
+    studentId: str
+    lat: float
+    lon: float
+    image: str
+
+@app.get("/", response_class=HTMLResponse)
+async def read_index():
+    # ดึงไฟล์หน้าเว็บขึ้นมาแสดงผล
+    if os.path.exists("index.html"):
+        with open("index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>ไฟล์ index.html ไม่โดนอัปโหลดเข้าเซิร์ฟเวอร์</h1>"
+
+@app.post("/api/checkin")
+async def process_check_in(data: CheckInSchema):
+    try:
+        # 1. อัปโหลดรูปภาพที่ถ่ายได้เข้าสู่ ImgBB Cloud Storage
+        raw_image = data.image.split(",")[1] if "," in data.image else data.image
+        imgbb_url = "https://api.imgbb.com/1/upload"
+        
+        res_image = requests.post(imgbb_url, data={
+            "key": IMGBB_API_KEY,
+            "image": raw_image
+        }).json()
+        
+        if not res_image.get("success"):
+            return {"status": "ERROR", "message": "ระบบเก็บรูปภาพปลายทางขัดข้อง ทำรายการไม่สำเร็จ"}
+            
+        photo_url = res_image["data"]["url"]
+
+        # 2. เชื่อมต่อไปยัง Google Sheets (แผ่นงาน ปวส2/1)
+        # ตรวจสอบว่ามีไฟล์คีย์ยืนยันตัวตนอยู่จริงไหม
+        if not os.path.exists('credentials.json'):
+            return {"status": "ERROR", "message": "เซิร์ฟเวอร์ขาดไฟล์ credentials.json"}
+            
+        gc = gspread.service_account(filename='credentials.json')
+        sh = gc.open("เช็คชื่อฝึกงาน")  # ชื่อไฟล์ใน Google Sheets ต้องตรงเป๊ะๆ
+        worksheet = sh.worksheet("ปวส2/1")
+
+        # ดึงรายชื่อรหัสนักศึกษาในคอลัมน์ C มาทั้งหมด (ตัดแถวหัวตารางออก)
+        student_ids = worksheet.col_values(3)[1:]
+        input_id = data.studentId.strip()
+
+        if input_id not in student_ids:
+            return {"status": "ERROR", "message": f"ระบุรหัสผิด หรือไม่พบรหัสนักศึกษา [{input_id}] ในห้อง ปวส.2/1"}
+
+        # หาแถวของนักศึกษาในระบบ (+2 เพื่อชดเชย index 0 และ แถวหัวข้อตาราง)
+        target_row = student_ids.index(input_id) + 2
+
+        # 3. บันทึกประวัติพิกัดและลิงก์ภาพลงล็อกของนักศึกษา
+        # ตั้งเวลาปัจจุบันแบบเขตเวลาไทย (GMT+7)
+        tz_offset = datetime.timezone(datetime.timedelta(hours=7))
+        current_time = datetime.datetime.now(tz_offset).strftime("%Y-%m-%d %H:%M:%S")
+        
+        worksheet.update_cell(target_row, 1, current_time)  # คอลัมน์ A: วันที่-เวลา
+        worksheet.update_cell(target_row, 5, data.lat)       # คอลัมน์ E: ละติจูด
+        worksheet.update_cell(target_row, 6, data.lon)       # คอลัมน์ F: ลองจิจูด
+        worksheet.update_cell(target_row, 7, photo_url)     # คอลัมน์ G: ลิงก์รูปถ่าย
+
+        return {"status": "SUCCESS", "message": "เช็คอินสำเร็จและบันทึกพิกัดลง Google Sheets แล้ว!"}
+
+    except Exception as e:
+        return {"status": "ERROR", "message": f"เกิดข้อผิดพลาดภายในระบบ: {str(e)}"}
