@@ -20,7 +20,8 @@ app.add_middleware(
 )
 
 # 🔥 ใส่ API Key ของ ImgBB ที่คุณสมัครได้ที่นี่
-IMGBB_API_KEY = "c299dc524f2bc43c2d766741c0a83047"
+# แก้ไขบรรทัด IMGBB_API_KEY ใน main.py บน GitHub ให้เป็นแบบนี้:
+IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "c299dc524f2bc43c2d766741c0a83047")
 
 class CheckInSchema(BaseModel):
     studentId: str
