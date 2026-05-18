@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import gspread
 import requests
 import datetime
+import json
 import os
 
 app = FastAPI()
@@ -19,7 +20,7 @@ app.add_middleware(
 )
 
 # 🔥 ใส่ API Key ของ ImgBB ที่คุณสมัครได้ที่นี่
-IMGBB_API_KEY = "2d92667726a566be79eef1517643bc01"
+IMGBB_API_KEY = "ใส่_API_KEY_IMGBB_ของคุณตรงนี้"
 
 class CheckInSchema(BaseModel):
     studentId: str
@@ -29,7 +30,6 @@ class CheckInSchema(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
-    # ดึงไฟล์หน้าเว็บขึ้นมาแสดงผล
     if os.path.exists("index.html"):
         with open("index.html", "r", encoding="utf-8") as f:
             return f.read()
@@ -52,13 +52,16 @@ async def process_check_in(data: CheckInSchema):
             
         photo_url = res_image["data"]["url"]
 
-        # 2. เชื่อมต่อไปยัง Google Sheets (แผ่นงาน ปวส2/1)
-        # ตรวจสอบว่ามีไฟล์คีย์ยืนยันตัวตนอยู่จริงไหม
-        if not os.path.exists('credentials.json'):
-            return {"status": "ERROR", "message": "เซิร์ฟเวอร์ขาดไฟล์ credentials.json"}
+        # 2. 🔥 ดึงคีย์ยืนยันตัวตนจาก Environment Variables บน Render
+        cred_env = os.environ.get("credentials.json")
+        if not cred_env:
+            return {"status": "ERROR", "message": "เซิร์ฟเวอร์หาค่ารหัสใน Environment Variables ไม่เจอ"}
             
-        gc = gspread.service_account(filename='credentials.json')
-        sh = gc.open("เช็คชื่อฝึกงาน")  # ชื่อไฟล์ใน Google Sheets ต้องตรงเป๊ะๆ
+        # แปลงข้อความ Text จากตัวแปรให้กลายเป็นโครงสร้าง JSON ดิบเพื่อเปิดสิทธิ์เข้าใช้ชีต
+        info = json.loads(cred_env)
+        gc = gspread.service_account_from_dict(info)
+        
+        sh = gc.open("เช็คชื่อฝึกงาน")  # ชื่อไฟล์ใน Google Sheets
         worksheet = sh.worksheet("ปวส2/1")
 
         # ดึงรายชื่อรหัสนักศึกษาในคอลัมน์ C มาทั้งหมด (ตัดแถวหัวตารางออก)
