@@ -87,5 +87,6 @@ async def process_check_in(data: CheckInSchema):
 
         return {"status": "SUCCESS", "message": "เช็คอินสำเร็จและบันทึกพิกัดลง Google Sheets แล้ว!"}
 
+    #  เปลี่ยนเป็นโค้ดชุดนี้แทน:
     except Exception as e:
-        return {"status": "ERROR", "message": f"เกิดข้อผิดพลาดภายในระบบ: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
